@@ -55,6 +55,7 @@ class DiscordConfig(BaseModel):
     allow_from: list[str] = Field(default_factory=list)  # 允许的用户ID列表
     gateway_url: str = "wss://gateway.discord.gg/?v=10&encoding=json"  # Discord网关URL
     intents: int = 37377  # 意图标志：GUILDS + GUILD_MESSAGES + DIRECT_MESSAGES + MESSAGE_CONTENT
+    proxy: str | None = None  # HTTP/SOCKS5代理URL，例如"http://127.0.0.1:7890"或"socks5://127.0.0.1:7890"
 
 class EmailConfig(BaseModel):
     """邮件渠道配置（IMAP接收 + SMTP发送）。"""
@@ -207,6 +208,13 @@ class GatewayConfig(BaseModel):
     port: int = 18790  # 监听端口
 
 
+class ProxyConfig(BaseModel):
+    """全局代理配置（可选，用于环境变量等场景）。"""
+    https_proxy: str | None = None
+    http_proxy: str | None = None
+    all_proxy: str | None = None
+
+
 class WebSearchConfig(BaseModel):
     """网络搜索工具配置。"""
     api_key: str = ""  # Brave Search API密钥
@@ -241,6 +249,7 @@ class Config(BaseSettings):
     channels: ChannelsConfig = Field(default_factory=ChannelsConfig)  # 渠道配置
     providers: ProvidersConfig = Field(default_factory=ProvidersConfig)  # 提供者配置
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)  # 网关配置
+    proxy: ProxyConfig = Field(default_factory=ProxyConfig)  # 全局代理（可选）
     tools: ToolsConfig = Field(default_factory=ToolsConfig)  # 工具配置
     
     @property

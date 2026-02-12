@@ -6,6 +6,7 @@
 
 import asyncio
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -54,11 +55,30 @@ class DiscordChannel(BaseChannel):
             return
 
         self._running = True
-        self._http = httpx.AsyncClient(timeout=30.0)
+        
+        # 配置 HTTP 客户端代理
+        http_proxy = self.config.proxy if self.config.proxy else None
+        self._http = httpx.AsyncClient(timeout=30.0, proxy=http_proxy)
 
         while self._running:
+            original_proxies = {}
             try:
                 logger.info("Connecting to Discord gateway...")
+                # 配置 WebSocket 代理
+                # websockets 库会自动从环境变量读取代理，如果需要自定义代理，
+                # 可以在连接前临时设置环境变量
+                if self.config.proxy:
+                    # 保存原始环境变量
+                    for key in ['https_proxy', 'http_proxy', 'all_proxy', 'HTTPS_PROXY', 'HTTP_PROXY', 'ALL_PROXY']:
+                        original_proxies[key] = os.environ.get(key)
+                    # 设置代理环境变量（websockets 会读取这些）
+                    # 对于 SOCKS5，使用 all_proxy；对于 HTTP，使用 https_proxy
+                    if self.config.proxy.startswith('socks5://'):
+                        os.environ['ALL_PROXY'] = self.config.proxy
+                    else:
+                        os.environ['HTTPS_PROXY'] = self.config.proxy
+                        os.environ['HTTP_PROXY'] = self.config.proxy
+                
                 async with websockets.connect(self.config.gateway_url) as ws:
                     self._ws = ws
                     await self._gateway_loop()
@@ -69,6 +89,14 @@ class DiscordChannel(BaseChannel):
                 if self._running:
                     logger.info("Reconnecting to Discord gateway in 5 seconds...")
                     await asyncio.sleep(5)
+            finally:
+                # 恢复原始环境变量
+                if original_proxies:
+                    for key, value in original_proxies.items():
+                        if value is None:
+                            os.environ.pop(key, None)
+                        else:
+                            os.environ[key] = value
 
     async def stop(self) -> None:
         """
