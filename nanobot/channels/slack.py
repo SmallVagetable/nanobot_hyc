@@ -1,4 +1,8 @@
-"""Slack channel implementation using Socket Mode."""
+"""使用Socket模式实现的Slack渠道。
+
+此模块实现了Slack聊天渠道，使用Socket模式进行实时通信。
+支持私聊和群聊，支持@提及检测和线程回复。
+"""
 
 import asyncio
 import re
@@ -17,7 +21,12 @@ from nanobot.config.schema import SlackConfig
 
 
 class SlackChannel(BaseChannel):
-    """Slack channel using Socket Mode."""
+    """
+    使用Socket模式的Slack渠道。
+    
+    通过Socket模式连接Slack，实时接收消息事件。
+    支持私聊、群聊、@提及检测和线程回复功能。
+    """
 
     name = "slack"
 
@@ -29,7 +38,11 @@ class SlackChannel(BaseChannel):
         self._bot_user_id: str | None = None
 
     async def start(self) -> None:
-        """Start the Slack Socket Mode client."""
+        """
+        启动Slack Socket模式客户端。
+        
+        初始化Slack Web客户端和Socket模式客户端，开始监听消息事件。
+        """
         if not self.config.bot_token or not self.config.app_token:
             logger.error("Slack bot/app token not configured")
             return
@@ -47,7 +60,7 @@ class SlackChannel(BaseChannel):
 
         self._socket_client.socket_mode_request_listeners.append(self._on_socket_request)
 
-        # Resolve bot user ID for mention handling
+        # 解析机器人用户ID用于@提及处理
         try:
             auth = await self._web_client.auth_test()
             self._bot_user_id = auth.get("user_id")
@@ -62,7 +75,11 @@ class SlackChannel(BaseChannel):
             await asyncio.sleep(1)
 
     async def stop(self) -> None:
-        """Stop the Slack client."""
+        """
+        停止Slack客户端。
+        
+        关闭Socket模式连接并清理资源。
+        """
         self._running = False
         if self._socket_client:
             try:
@@ -72,7 +89,15 @@ class SlackChannel(BaseChannel):
             self._socket_client = None
 
     async def send(self, msg: OutboundMessage) -> None:
-        """Send a message through Slack."""
+        """
+        通过Slack发送消息。
+        
+        支持线程回复功能，对于频道/群组消息会在线程中回复，
+        私聊消息不使用线程。
+        
+        Args:
+            msg: 要发送的出站消息
+        """
         if not self._web_client:
             logger.warning("Slack client not running")
             return
@@ -80,7 +105,7 @@ class SlackChannel(BaseChannel):
             slack_meta = msg.metadata.get("slack", {}) if msg.metadata else {}
             thread_ts = slack_meta.get("thread_ts")
             channel_type = slack_meta.get("channel_type")
-            # Only reply in thread for channel/group messages; DMs don't use threads
+            # 只为频道/群组消息在线程中回复；私聊不使用线程
             use_thread = thread_ts and channel_type != "im"
             await self._web_client.chat_postMessage(
                 channel=msg.chat_id,
@@ -95,11 +120,16 @@ class SlackChannel(BaseChannel):
         client: SocketModeClient,
         req: SocketModeRequest,
     ) -> None:
-        """Handle incoming Socket Mode requests."""
+        """
+        处理入站的Socket模式请求。
+
+        只关注events_api类型的请求，并在收到后立即发送ACK，
+        然后根据事件类型分发处理。
+        """
         if req.type != "events_api":
             return
 
-        # Acknowledge right away
+        # 立即发送ACK，避免Slack重试
         await client.send_socket_mode_response(
             SocketModeResponse(envelope_id=req.envelope_id)
         )
@@ -108,26 +138,26 @@ class SlackChannel(BaseChannel):
         event = payload.get("event") or {}
         event_type = event.get("type")
 
-        # Handle app mentions or plain messages
+        # 处理@应用提及或普通消息
         if event_type not in ("message", "app_mention"):
             return
 
         sender_id = event.get("user")
         chat_id = event.get("channel")
 
-        # Ignore bot/system messages (any subtype = not a normal user message)
+        # 忽略机器人/系统消息（有subtype的通常不是普通用户消息）
         if event.get("subtype"):
             return
         if self._bot_user_id and sender_id == self._bot_user_id:
             return
 
-        # Avoid double-processing: Slack sends both `message` and `app_mention`
-        # for mentions in channels. Prefer `app_mention`.
+        # 避免重复处理：Slack在频道中@机器人时会发送`message`和`app_mention`两种事件，
+        # 这里优先处理`app_mention`事件。
         text = event.get("text") or ""
         if event_type == "message" and self._bot_user_id and f"<@{self._bot_user_id}>" in text:
             return
 
-        # Debug: log basic event shape
+        # 调试：记录基本事件结构
         logger.debug(
             "Slack event: type={} subtype={} user={} channel={} channel_type={} text={}",
             event_type,
@@ -151,7 +181,7 @@ class SlackChannel(BaseChannel):
         text = self._strip_bot_mention(text)
 
         thread_ts = event.get("thread_ts") or event.get("ts")
-        # Add :eyes: reaction to the triggering message (best-effort)
+        # 为触发消息添加:eyes:表情（尽力而为，失败不会影响主流程）
         try:
             if self._web_client and event.get("ts"):
                 await self._web_client.reactions_add(
@@ -183,7 +213,7 @@ class SlackChannel(BaseChannel):
                 return sender_id in self.config.dm.allow_from
             return True
 
-        # Group / channel messages
+        # 群组/频道消息
         if self.config.group_policy == "allowlist":
             return chat_id in self.config.group_allow_from
         return True

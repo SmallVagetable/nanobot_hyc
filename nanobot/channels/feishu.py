@@ -1,4 +1,8 @@
-"""Feishu/Lark channel implementation using lark-oapi SDK with WebSocket long connection."""
+"""使用lark-oapi SDK和WebSocket长连接实现的飞书/Lark渠道。
+
+此模块实现了飞书/Lark聊天渠道，使用WebSocket长连接接收事件。
+无需公网IP或webhook，通过WebSocket实时接收消息。
+"""
 
 import asyncio
 import json
@@ -30,7 +34,7 @@ except ImportError:
     lark = None
     Emoji = None
 
-# Message type display mapping
+# 消息类型显示映射
 MSG_TYPE_MAP = {
     "image": "[image]",
     "audio": "[audio]",
@@ -41,14 +45,14 @@ MSG_TYPE_MAP = {
 
 class FeishuChannel(BaseChannel):
     """
-    Feishu/Lark channel using WebSocket long connection.
+    使用WebSocket长连接的飞书/Lark渠道。
     
-    Uses WebSocket to receive events - no public IP or webhook required.
+    使用WebSocket接收事件 - 无需公网IP或webhook。
     
-    Requires:
-    - App ID and App Secret from Feishu Open Platform
-    - Bot capability enabled
-    - Event subscription enabled (im.message.receive_v1)
+    要求：
+    - 从飞书开放平台获取App ID和App Secret
+    - 启用机器人能力
+    - 启用事件订阅（im.message.receive_v1）
     """
     
     name = "feishu"
@@ -59,11 +63,15 @@ class FeishuChannel(BaseChannel):
         self._client: Any = None
         self._ws_client: Any = None
         self._ws_thread: threading.Thread | None = None
-        self._processed_message_ids: OrderedDict[str, None] = OrderedDict()  # Ordered dedup cache
+        self._processed_message_ids: OrderedDict[str, None] = OrderedDict()  # 有序去重缓存
         self._loop: asyncio.AbstractEventLoop | None = None
     
     async def start(self) -> None:
-        """Start the Feishu bot with WebSocket long connection."""
+        """
+        使用WebSocket长连接启动飞书机器人。
+        
+        初始化飞书客户端和WebSocket连接，开始监听消息事件。
+        """
         if not FEISHU_AVAILABLE:
             logger.error("Feishu SDK not installed. Run: pip install lark-oapi")
             return
@@ -75,14 +83,14 @@ class FeishuChannel(BaseChannel):
         self._running = True
         self._loop = asyncio.get_running_loop()
         
-        # Create Lark client for sending messages
+        # 创建Lark客户端用于发送消息
         self._client = lark.Client.builder() \
             .app_id(self.config.app_id) \
             .app_secret(self.config.app_secret) \
             .log_level(lark.LogLevel.INFO) \
             .build()
         
-        # Create event handler (only register message receive, ignore other events)
+        # 创建事件处理器（只注册消息接收事件，忽略其他事件）
         event_handler = lark.EventDispatcherHandler.builder(
             self.config.encrypt_key or "",
             self.config.verification_token or "",
@@ -90,7 +98,7 @@ class FeishuChannel(BaseChannel):
             self._on_message_sync
         ).build()
         
-        # Create WebSocket client for long connection
+        # 创建WebSocket客户端用于长连接
         self._ws_client = lark.ws.Client(
             self.config.app_id,
             self.config.app_secret,
@@ -119,7 +127,11 @@ class FeishuChannel(BaseChannel):
             await asyncio.sleep(1)
     
     async def stop(self) -> None:
-        """Stop the Feishu bot."""
+        """
+        停止飞书机器人。
+
+        关闭WebSocket客户端并更新运行状态。
+        """
         self._running = False
         if self._ws_client:
             try:
@@ -129,7 +141,13 @@ class FeishuChannel(BaseChannel):
         logger.info("Feishu bot stopped")
     
     def _add_reaction_sync(self, message_id: str, emoji_type: str) -> None:
-        """Sync helper for adding reaction (runs in thread pool)."""
+        """
+        同步添加表情反应的辅助函数（在线程池中运行）。
+
+        Args:
+            message_id: 消息ID
+            emoji_type: 表情类型（如THUMBSUP、OK等）
+        """
         try:
             request = CreateMessageReactionRequest.builder() \
                 .message_id(message_id) \
@@ -160,7 +178,7 @@ class FeishuChannel(BaseChannel):
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, self._add_reaction_sync, message_id, emoji_type)
     
-    # Regex to match markdown tables (header + separator + data rows)
+    # 用于匹配Markdown表格（表头 + 分隔行 + 数据行）的正则
     _TABLE_RE = re.compile(
         r"((?:^[ \t]*\|.+\|[ \t]*\n)(?:^[ \t]*\|[-:\s|]+\|[ \t]*\n)(?:^[ \t]*\|.+\|[ \t]*\n?)+)",
         re.MULTILINE,
@@ -168,7 +186,11 @@ class FeishuChannel(BaseChannel):
 
     @staticmethod
     def _parse_md_table(table_text: str) -> dict | None:
-        """Parse a markdown table into a Feishu table element."""
+        """
+        将Markdown表格解析为飞书表格元素。
+
+        返回的结构可直接用于飞书交互式卡片中的表格组件。
+        """
         lines = [l.strip() for l in table_text.strip().split("\n") if l.strip()]
         if len(lines) < 3:
             return None
@@ -185,7 +207,11 @@ class FeishuChannel(BaseChannel):
         }
 
     def _build_card_elements(self, content: str) -> list[dict]:
-        """Split content into markdown + table elements for Feishu card."""
+        """
+        将内容拆分为Markdown和表格元素，用于构建飞书卡片。
+
+        当检测到Markdown表格时，会将其转换为表格元素，其余部分保持为Markdown。
+        """
         elements, last_end = [], 0
         for m in self._TABLE_RE.finditer(content):
             before = content[last_end:m.start()].strip()
@@ -199,7 +225,12 @@ class FeishuChannel(BaseChannel):
         return elements or [{"tag": "markdown", "content": content}]
 
     async def send(self, msg: OutboundMessage) -> None:
-        """Send a message through Feishu."""
+        """
+        通过飞书发送消息。
+
+        自动根据chat_id选择``open_id``或``chat_id``作为接收类型，
+        并支持带Markdown表格的交互式卡片。
+        """
         if not self._client:
             logger.warning("Feishu client not initialized")
             return
@@ -245,14 +276,19 @@ class FeishuChannel(BaseChannel):
     
     def _on_message_sync(self, data: "P2ImMessageReceiveV1") -> None:
         """
-        Sync handler for incoming messages (called from WebSocket thread).
-        Schedules async handling in the main event loop.
+        入站消息的同步处理函数（在WebSocket线程中调用）。
+
+        将实际的异步处理调度到主事件循环中执行。
         """
         if self._loop and self._loop.is_running():
             asyncio.run_coroutine_threadsafe(self._on_message(data), self._loop)
     
     async def _on_message(self, data: "P2ImMessageReceiveV1") -> None:
-        """Handle incoming message from Feishu."""
+        """
+        处理来自飞书的入站消息。
+
+        提取消息内容、发送者和会话信息，并转发到消息总线。
+        """
         try:
             event = data.event
             message = event.message

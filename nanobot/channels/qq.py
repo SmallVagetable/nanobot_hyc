@@ -1,4 +1,8 @@
-"""QQ channel implementation using botpy SDK."""
+"""使用botpy SDK实现的QQ渠道。
+
+此模块实现了QQ聊天渠道，使用botpy SDK通过WebSocket连接。
+支持私聊消息的接收和发送。
+"""
 
 import asyncio
 from collections import deque
@@ -26,7 +30,15 @@ if TYPE_CHECKING:
 
 
 def _make_bot_class(channel: "QQChannel") -> "type[botpy.Client]":
-    """Create a botpy Client subclass bound to the given channel."""
+    """
+    创建绑定到给定渠道的botpy Client子类。
+    
+    Args:
+        channel: QQ渠道实例
+    
+    Returns:
+        botpy Client子类
+    """
     intents = botpy.Intents(public_messages=True, direct_message=True)
 
     class _Bot(botpy.Client):
@@ -46,7 +58,12 @@ def _make_bot_class(channel: "QQChannel") -> "type[botpy.Client]":
 
 
 class QQChannel(BaseChannel):
-    """QQ channel using botpy SDK with WebSocket connection."""
+    """
+    使用botpy SDK和WebSocket连接的QQ渠道。
+    
+    通过botpy SDK连接QQ开放平台，支持私聊消息的接收和发送。
+    支持自动重连，当连接断开时会自动尝试重新连接。
+    """
 
     name = "qq"
 
@@ -58,7 +75,11 @@ class QQChannel(BaseChannel):
         self._bot_task: asyncio.Task | None = None
 
     async def start(self) -> None:
-        """Start the QQ bot."""
+        """
+        启动QQ机器人。
+        
+        初始化botpy客户端并开始连接，支持自动重连。
+        """
         if not QQ_AVAILABLE:
             logger.error("QQ SDK not installed. Run: pip install qq-botpy")
             return
@@ -75,7 +96,11 @@ class QQChannel(BaseChannel):
         logger.info("QQ bot started (C2C private message)")
 
     async def _run_bot(self) -> None:
-        """Run the bot connection with auto-reconnect."""
+        """
+        运行机器人连接，支持自动重连。
+        
+        持续运行机器人连接，如果连接断开会自动尝试重新连接。
+        """
         while self._running:
             try:
                 await self._client.start(appid=self.config.app_id, secret=self.config.secret)
@@ -86,7 +111,11 @@ class QQChannel(BaseChannel):
                 await asyncio.sleep(5)
 
     async def stop(self) -> None:
-        """Stop the QQ bot."""
+        """
+        停止QQ机器人。
+        
+        取消机器人任务并清理资源。
+        """
         self._running = False
         if self._bot_task:
             self._bot_task.cancel()
@@ -97,7 +126,12 @@ class QQChannel(BaseChannel):
         logger.info("QQ bot stopped")
 
     async def send(self, msg: OutboundMessage) -> None:
-        """Send a message through QQ."""
+        """
+        通过QQ发送消息。
+        
+        Args:
+            msg: 要发送的出站消息
+        """
         if not self._client:
             logger.warning("QQ client not initialized")
             return
@@ -111,9 +145,16 @@ class QQChannel(BaseChannel):
             logger.error(f"Error sending QQ message: {e}")
 
     async def _on_message(self, data: "C2CMessage") -> None:
-        """Handle incoming message from QQ."""
+        """
+        处理来自QQ的入站消息。
+
+        使用消息ID进行去重，然后将消息内容转发到消息总线。
+
+        Args:
+            data: C2C消息对象
+        """
         try:
-            # Dedup by message ID
+            # 按消息ID去重
             if data.id in self._processed_ids:
                 return
             self._processed_ids.append(data.id)

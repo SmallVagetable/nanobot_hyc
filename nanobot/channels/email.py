@@ -1,4 +1,11 @@
-"""Email channel implementation using IMAP polling + SMTP replies."""
+"""使用IMAP轮询和SMTP回复实现的邮件渠道。
+
+此模块实现了邮件渠道，支持：
+- 通过IMAP轮询接收邮件
+- 通过SMTP发送回复
+- 自动处理邮件主题和回复关系
+- 支持HTML邮件解析
+"""
 
 import asyncio
 import html
@@ -24,14 +31,14 @@ from nanobot.config.schema import EmailConfig
 
 class EmailChannel(BaseChannel):
     """
-    Email channel.
+    邮件渠道。
 
-    Inbound:
-    - Poll IMAP mailbox for unread messages.
-    - Convert each message into an inbound event.
+    入站：
+    - 轮询IMAP邮箱获取未读邮件
+    - 将每条邮件转换为入站事件
 
-    Outbound:
-    - Send responses via SMTP back to the sender address.
+    出站：
+    - 通过SMTP将响应发送回发件人地址
     """
 
     name = "email"
@@ -55,11 +62,16 @@ class EmailChannel(BaseChannel):
         self.config: EmailConfig = config
         self._last_subject_by_chat: dict[str, str] = {}
         self._last_message_id_by_chat: dict[str, str] = {}
-        self._processed_uids: set[str] = set()  # Capped to prevent unbounded growth
+        self._processed_uids: set[str] = set()  # 受上限限制的UID集合，防止无限增长
         self._MAX_PROCESSED_UIDS = 100000
 
     async def start(self) -> None:
-        """Start polling IMAP for inbound emails."""
+        """
+        开始轮询IMAP获取入站邮件。
+        
+        定期轮询IMAP邮箱，获取未读邮件并转换为入站消息。
+        需要用户明确授权（consent_granted=true）才能运行。
+        """
         if not self.config.consent_granted:
             logger.warning(
                 "Email channel disabled: consent_granted is false. "
@@ -99,11 +111,25 @@ class EmailChannel(BaseChannel):
             await asyncio.sleep(poll_seconds)
 
     async def stop(self) -> None:
-        """Stop polling loop."""
+        """
+        停止轮询循环。
+        
+        设置运行标志为False，轮询循环会在下一次迭代时退出。
+        """
         self._running = False
 
     async def send(self, msg: OutboundMessage) -> None:
-        """Send email via SMTP."""
+        """
+        通过SMTP发送邮件。
+        
+        构建邮件消息并通过SMTP发送。自动处理：
+        - 邮件主题（添加回复前缀）
+        - 回复关系（In-Reply-To和References头）
+        - 发件人地址
+        
+        Args:
+            msg: 要发送的出站消息
+        """
         if not self.config.consent_granted:
             logger.warning("Skip email send: consent_granted is false")
             return
@@ -185,7 +211,14 @@ class EmailChannel(BaseChannel):
             smtp.send_message(msg)
 
     def _fetch_new_messages(self) -> list[dict[str, Any]]:
-        """Poll IMAP and return parsed unread messages."""
+        """
+        轮询IMAP并返回解析后的未读邮件列表。
+
+        使用``UNSEEN``搜索条件获取未读邮件，可选地标记为已读并进行去重。
+
+        Returns:
+            包含解析后邮件内容的字典列表
+        """
         return self._fetch_messages(
             search_criteria=("UNSEEN",),
             mark_seen=self.config.mark_seen,
@@ -226,7 +259,18 @@ class EmailChannel(BaseChannel):
         dedupe: bool,
         limit: int,
     ) -> list[dict[str, Any]]:
-        """Fetch messages by arbitrary IMAP search criteria."""
+        """
+        根据任意IMAP搜索条件获取邮件。
+
+        Args:
+            search_criteria: IMAP搜索条件元组
+            mark_seen: 是否将匹配邮件标记为已读
+            dedupe: 是否根据UID去重
+            limit: 返回的最大邮件数量（0表示不限制）
+
+        Returns:
+            解析后的邮件字典列表
+        """
         messages: list[dict[str, Any]] = []
         mailbox = self.config.imap_mailbox or "INBOX"
 
@@ -318,7 +362,11 @@ class EmailChannel(BaseChannel):
 
     @classmethod
     def _format_imap_date(cls, value: date) -> str:
-        """Format date for IMAP search (always English month abbreviations)."""
+        """
+        为IMAP搜索格式化日期（始终使用英文月份缩写）。
+
+        例如：2024-01-02 -> ``02-Jan-2024``。
+        """
         month = cls._IMAP_MONTHS[value.month - 1]
         return f"{value.day:02d}-{month}-{value.year}"
 
@@ -350,7 +398,12 @@ class EmailChannel(BaseChannel):
 
     @classmethod
     def _extract_text_body(cls, msg: Any) -> str:
-        """Best-effort extraction of readable body text."""
+        """
+        尽最大努力提取可读的邮件正文文本。
+
+        优先使用纯文本部分，其次从HTML中提取文本内容。
+        对多部分邮件会合并多个文本片段。
+        """
         if msg.is_multipart():
             plain_parts: list[str] = []
             html_parts: list[str] = []

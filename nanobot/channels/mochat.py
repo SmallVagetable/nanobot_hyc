@@ -1,4 +1,9 @@
-"""Mochat channel implementation using Socket.IO with HTTP polling fallback."""
+"""使用Socket.IO和HTTP轮询回退实现的Mochat渠道。
+
+此模块实现了Mochat聊天渠道，使用Socket.IO进行实时通信，
+如果Socket.IO不可用则回退到HTTP轮询模式。
+支持消息延迟发送、@提及检测等功能。
+"""
 
 from __future__ import annotations
 
@@ -31,52 +36,82 @@ try:
 except ImportError:
     MSGPACK_AVAILABLE = False
 
-MAX_SEEN_MESSAGE_IDS = 2000
-CURSOR_SAVE_DEBOUNCE_S = 0.5
+MAX_SEEN_MESSAGE_IDS = 2000  # 最大已处理消息ID数量
+CURSOR_SAVE_DEBOUNCE_S = 0.5  # 游标保存防抖时间（秒）
 
 
 # ---------------------------------------------------------------------------
-# Data classes
+# 数据类
 # ---------------------------------------------------------------------------
 
 @dataclass
 class MochatBufferedEntry:
-    """Buffered inbound entry for delayed dispatch."""
-    raw_body: str
-    author: str
-    sender_name: str = ""
-    sender_username: str = ""
-    timestamp: int | None = None
-    message_id: str = ""
-    group_id: str = ""
+    """
+    用于延迟分发的缓冲入站条目。
+    
+    用于实现消息延迟发送功能，将消息缓冲起来，
+    在延迟时间到达后统一发送。
+    """
+    raw_body: str  # 原始消息体
+    author: str  # 作者ID
+    sender_name: str = ""  # 发送者名称
+    sender_username: str = ""  # 发送者用户名
+    timestamp: int | None = None  # 时间戳
+    message_id: str = ""  # 消息ID
+    group_id: str = ""  # 群组ID
 
 
 @dataclass
 class DelayState:
-    """Per-target delayed message state."""
-    entries: list[MochatBufferedEntry] = field(default_factory=list)
-    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
-    timer: asyncio.Task | None = None
+    """
+    每个目标的延迟消息状态。
+    
+    用于管理每个目标的延迟消息队列和定时器。
+    """
+    entries: list[MochatBufferedEntry] = field(default_factory=list)  # 延迟条目列表
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)  # 异步锁
+    timer: asyncio.Task | None = None  # 定时器任务
 
 
 @dataclass
 class MochatTarget:
-    """Outbound target resolution result."""
-    id: str
-    is_panel: bool
+    """
+    出站目标解析结果。
+    
+    用于标识消息的目标是会话还是面板。
+    """
+    id: str  # 目标ID
+    is_panel: bool  # 是否为面板
 
 
 # ---------------------------------------------------------------------------
-# Pure helpers
+# 纯辅助函数
 # ---------------------------------------------------------------------------
 
 def _safe_dict(value: Any) -> dict:
-    """Return *value* if it's a dict, else empty dict."""
+    """
+    如果value是字典则返回，否则返回空字典。
+    
+    Args:
+        value: 要检查的值
+    
+    Returns:
+        字典对象
+    """
     return value if isinstance(value, dict) else {}
 
 
 def _str_field(src: dict, *keys: str) -> str:
-    """Return the first non-empty str value found for *keys*, stripped."""
+    """
+    返回在keys中找到的第一个非空字符串值（去除首尾空格）。
+    
+    Args:
+        src: 源字典
+        *keys: 要查找的键列表
+    
+    Returns:
+        找到的字符串值，如果未找到则返回空字符串
+    """
     for k in keys:
         v = src.get(k)
         if isinstance(v, str) and v.strip():
@@ -89,7 +124,25 @@ def _make_synthetic_event(
     meta: Any, group_id: str, converse_id: str,
     timestamp: Any = None, *, author_info: Any = None,
 ) -> dict[str, Any]:
-    """Build a synthetic ``message.add`` event dict."""
+    """
+    构造一个合成的``message.add``事件字典。
+
+    用于将HTTP轮询或其他来源的原始数据包装成统一的事件格式，
+    便于与Socket.IO事件处理逻辑复用。
+
+    Args:
+        message_id: 消息ID
+        author: 作者ID
+        content: 消息内容
+        meta: 元数据
+        group_id: 群组ID
+        converse_id: 会话ID
+        timestamp: 时间戳（可选）
+        author_info: 作者信息（可选）
+
+    Returns:
+        符合Mochat事件格式的字典
+    """
     payload: dict[str, Any] = {
         "messageId": message_id, "author": author,
         "content": content, "meta": _safe_dict(meta),
@@ -105,7 +158,12 @@ def _make_synthetic_event(
 
 
 def normalize_mochat_content(content: Any) -> str:
-    """Normalize content payload to text."""
+    """
+    将内容负载规范化为文本。
+
+    对字符串进行strip，对于其他类型尝试JSON序列化，
+    失败时回退到``str(content)``。
+    """
     if isinstance(content, str):
         return content.strip()
     if content is None:
@@ -117,7 +175,12 @@ def normalize_mochat_content(content: Any) -> str:
 
 
 def resolve_mochat_target(raw: str) -> MochatTarget:
-    """Resolve id and target kind from user-provided target string."""
+    """
+    从用户提供的目标字符串解析ID和目标类型。
+
+    支持前缀：``mochat:``, ``group:``, ``channel:``, ``panel:``。
+    没有前缀且ID不以``session_``开头时，默认视为面板。
+    """
     trimmed = (raw or "").strip()
     if not trimmed:
         return MochatTarget(id="", is_panel=False)
@@ -136,7 +199,11 @@ def resolve_mochat_target(raw: str) -> MochatTarget:
 
 
 def extract_mention_ids(value: Any) -> list[str]:
-    """Extract mention ids from heterogeneous mention payload."""
+    """
+    从异构的mention负载中提取mention ID列表。
+
+    兼容字符串列表和包含多种键名（id/userId/_id）的字典列表。
+    """
     if not isinstance(value, list):
         return []
     ids: list[str] = []
@@ -154,7 +221,12 @@ def extract_mention_ids(value: Any) -> list[str]:
 
 
 def resolve_was_mentioned(payload: dict[str, Any], agent_user_id: str) -> bool:
-    """Resolve mention state from payload metadata and text fallback."""
+    """
+    根据payload元数据和文本回退判断是否被@提及。
+
+    先检查meta中的标记和ID列表，如果无法确定，则回退到文本内容中
+    搜索``<@id>``或``@id``形式。
+    """
     meta = payload.get("meta")
     if isinstance(meta, dict):
         if meta.get("mentioned") is True or meta.get("wasMentioned") is True:
@@ -171,7 +243,11 @@ def resolve_was_mentioned(payload: dict[str, Any], agent_user_id: str) -> bool:
 
 
 def resolve_require_mention(config: MochatConfig, session_id: str, group_id: str) -> bool:
-    """Resolve mention requirement for group/panel conversations."""
+    """
+    解析群组/面板会话是否需要@提及才能触发。
+
+    优先使用针对groupId/sessionId的配置，最后回退到全局配置。
+    """
     groups = config.groups or {}
     for key in (group_id, session_id, "*"):
         if key and key in groups:
@@ -180,7 +256,11 @@ def resolve_require_mention(config: MochatConfig, session_id: str, group_id: str
 
 
 def build_buffered_body(entries: list[MochatBufferedEntry], is_group: bool) -> str:
-    """Build text body from one or more buffered entries."""
+    """
+    从一个或多个缓冲条目构建文本内容。
+
+    在群聊场景下，会在每行前添加发送者标签以便区分来源。
+    """
     if not entries:
         return ""
     if len(entries) == 1:
@@ -199,7 +279,11 @@ def build_buffered_body(entries: list[MochatBufferedEntry], is_group: bool) -> s
 
 
 def parse_timestamp(value: Any) -> int | None:
-    """Parse event timestamp to epoch milliseconds."""
+    """
+    将事件时间戳解析为Unix毫秒时间戳。
+
+    支持ISO8601字符串，解析失败时返回None。
+    """
     if not isinstance(value, str) or not value.strip():
         return None
     try:
@@ -213,7 +297,12 @@ def parse_timestamp(value: Any) -> int | None:
 # ---------------------------------------------------------------------------
 
 class MochatChannel(BaseChannel):
-    """Mochat channel using socket.io with fallback polling workers."""
+    """
+    使用socket.io并带有HTTP轮询回退的Mochat渠道。
+
+    优先通过Socket.IO保持长连接，实现低延迟实时消息收发；
+    当Socket.IO不可用或连接失败时，会自动回退到HTTP轮询工作线程。
+    """
 
     name = "mochat"
 
@@ -249,7 +338,12 @@ class MochatChannel(BaseChannel):
     # ---- lifecycle ---------------------------------------------------------
 
     async def start(self) -> None:
-        """Start Mochat channel workers and websocket connection."""
+        """
+        启动Mochat渠道的工作线程和WebSocket连接。
+
+        初始化HTTP客户端、加载会话游标、根据配置订阅目标会话/面板，
+        然后尝试连接Socket.IO，如果失败则启动HTTP轮询回退模式。
+        """
         if not self.config.claw_token:
             logger.error("Mochat claw_token not configured")
             return
@@ -269,7 +363,12 @@ class MochatChannel(BaseChannel):
             await asyncio.sleep(1)
 
     async def stop(self) -> None:
-        """Stop all workers and clean up resources."""
+        """
+        停止所有工作线程并清理资源。
+
+        包括：停止刷新任务、关闭Socket.IO连接、保存会话游标、
+        关闭HTTP客户端等。
+        """
         self._running = False
         if self._refresh_task:
             self._refresh_task.cancel()
@@ -296,7 +395,12 @@ class MochatChannel(BaseChannel):
         self._ws_connected = self._ws_ready = False
 
     async def send(self, msg: OutboundMessage) -> None:
-        """Send outbound message to session or panel."""
+        """
+        向会话或面板发送出站消息。
+
+        根据chat_id解析目标类型（session/panel），并通过Mochat后端API发送。
+        文本和媒体（如文件路径）会组合成多行内容一并发送。
+        """
         if not self.config.claw_token:
             logger.warning("Mochat claw_token missing, skip send")
             return
@@ -879,7 +983,11 @@ class MochatChannel(BaseChannel):
 
     async def _api_send(self, path: str, id_key: str, id_val: str,
                         content: str, reply_to: str | None, group_id: str | None = None) -> dict[str, Any]:
-        """Unified send helper for session and panel messages."""
+        """
+        会话和面板消息的统一发送辅助函数。
+
+        根据不同API路径和ID字段构造请求体，并调用底层POST JSON方法。
+        """
         body: dict[str, Any] = {id_key: id_val, "content": content}
         if reply_to:
             body["replyTo"] = reply_to

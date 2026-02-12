@@ -1,4 +1,8 @@
-"""Discord channel implementation using Discord Gateway websocket."""
+"""使用Discord Gateway WebSocket实现的Discord渠道。
+
+此模块实现了Discord聊天渠道，使用Discord Gateway WebSocket协议
+进行实时通信。支持文本消息、附件、回复等功能。
+"""
 
 import asyncio
 import json
@@ -15,12 +19,17 @@ from nanobot.channels.base import BaseChannel
 from nanobot.config.schema import DiscordConfig
 
 
-DISCORD_API_BASE = "https://discord.com/api/v10"
-MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024  # 20MB
+DISCORD_API_BASE = "https://discord.com/api/v10"  # Discord API基础URL
+MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024  # 20MB，最大附件大小
 
 
 class DiscordChannel(BaseChannel):
-    """Discord channel using Gateway websocket."""
+    """
+    使用Gateway WebSocket的Discord渠道。
+    
+    通过Discord Gateway WebSocket协议连接，支持实时消息接收。
+    使用Discord REST API发送消息，支持速率限制处理。
+    """
 
     name = "discord"
 
@@ -34,7 +43,12 @@ class DiscordChannel(BaseChannel):
         self._http: httpx.AsyncClient | None = None
 
     async def start(self) -> None:
-        """Start the Discord gateway connection."""
+        """
+        启动Discord Gateway连接。
+        
+        连接到Discord Gateway WebSocket，开始监听消息。
+        支持自动重连，当连接断开时会自动尝试重新连接。
+        """
         if not self.config.token:
             logger.error("Discord bot token not configured")
             return
@@ -57,7 +71,11 @@ class DiscordChannel(BaseChannel):
                     await asyncio.sleep(5)
 
     async def stop(self) -> None:
-        """Stop the Discord channel."""
+        """
+        停止Discord渠道。
+        
+        取消心跳任务和打字任务，关闭WebSocket和HTTP连接。
+        """
         self._running = False
         if self._heartbeat_task:
             self._heartbeat_task.cancel()
@@ -73,7 +91,15 @@ class DiscordChannel(BaseChannel):
             self._http = None
 
     async def send(self, msg: OutboundMessage) -> None:
-        """Send a message through Discord REST API."""
+        """
+        通过Discord REST API发送消息。
+        
+        使用Discord REST API发送消息，支持回复功能。
+        自动处理速率限制，如果被限流会等待后重试。
+        
+        Args:
+            msg: 要发送的出站消息
+        """
         if not self._http:
             logger.warning("Discord HTTP client not initialized")
             return
@@ -92,6 +118,7 @@ class DiscordChannel(BaseChannel):
                 try:
                     response = await self._http.post(url, headers=headers, json=payload)
                     if response.status_code == 429:
+                        # 速率限制，等待后重试
                         data = response.json()
                         retry_after = float(data.get("retry_after", 1.0))
                         logger.warning(f"Discord rate limited, retrying in {retry_after}s")
@@ -108,7 +135,16 @@ class DiscordChannel(BaseChannel):
             await self._stop_typing(msg.chat_id)
 
     async def _gateway_loop(self) -> None:
-        """Main gateway loop: identify, heartbeat, dispatch events."""
+        """
+        主Gateway循环：身份验证、心跳、分发事件。
+        
+        处理Discord Gateway的所有事件，包括：
+        - HELLO: 启动心跳和身份验证
+        - READY: 连接就绪
+        - MESSAGE_CREATE: 新消息
+        - RECONNECT: 请求重连
+        - INVALID_SESSION: 会话无效
+        """
         if not self._ws:
             return
 
@@ -119,16 +155,16 @@ class DiscordChannel(BaseChannel):
                 logger.warning(f"Invalid JSON from Discord gateway: {raw[:100]}")
                 continue
 
-            op = data.get("op")
-            event_type = data.get("t")
-            seq = data.get("s")
-            payload = data.get("d")
+            op = data.get("op")  # 操作码
+            event_type = data.get("t")  # 事件类型
+            seq = data.get("s")  # 序列号
+            payload = data.get("d")  # 数据负载
 
             if seq is not None:
                 self._seq = seq
 
             if op == 10:
-                # HELLO: start heartbeat and identify
+                # HELLO: 启动心跳和身份验证
                 interval_ms = payload.get("heartbeat_interval", 45000)
                 await self._start_heartbeat(interval_ms / 1000)
                 await self._identify()
@@ -137,16 +173,20 @@ class DiscordChannel(BaseChannel):
             elif op == 0 and event_type == "MESSAGE_CREATE":
                 await self._handle_message_create(payload)
             elif op == 7:
-                # RECONNECT: exit loop to reconnect
+                # RECONNECT: 退出循环以重连
                 logger.info("Discord gateway requested reconnect")
                 break
             elif op == 9:
-                # INVALID_SESSION: reconnect
+                # INVALID_SESSION: 重连
                 logger.warning("Discord gateway invalid session")
                 break
 
     async def _identify(self) -> None:
-        """Send IDENTIFY payload."""
+        """
+        发送IDENTIFY负载到Discord Gateway。
+
+        用于完成身份验证，声明Bot令牌和订阅的intents。
+        """
         if not self._ws:
             return
 
@@ -165,7 +205,11 @@ class DiscordChannel(BaseChannel):
         await self._ws.send(json.dumps(identify))
 
     async def _start_heartbeat(self, interval_s: float) -> None:
-        """Start or restart the heartbeat loop."""
+        """
+        启动或重启心跳循环。
+
+        按指定间隔向Gateway发送心跳包，以保持连接存活。
+        """
         if self._heartbeat_task:
             self._heartbeat_task.cancel()
 
@@ -182,7 +226,11 @@ class DiscordChannel(BaseChannel):
         self._heartbeat_task = asyncio.create_task(heartbeat_loop())
 
     async def _handle_message_create(self, payload: dict[str, Any]) -> None:
-        """Handle incoming Discord messages."""
+        """
+        处理来自Discord的入站消息事件。
+
+        过滤掉机器人消息，提取发送者、频道和消息内容，并转发到消息总线。
+        """
         author = payload.get("author") or {}
         if author.get("bot"):
             return
@@ -239,7 +287,12 @@ class DiscordChannel(BaseChannel):
         )
 
     async def _start_typing(self, channel_id: str) -> None:
-        """Start periodic typing indicator for a channel."""
+        """
+        为指定频道启动周期性的“正在输入”指示器。
+
+        Args:
+            channel_id: Discord频道ID
+        """
         await self._stop_typing(channel_id)
 
         async def typing_loop() -> None:
@@ -255,7 +308,12 @@ class DiscordChannel(BaseChannel):
         self._typing_tasks[channel_id] = asyncio.create_task(typing_loop())
 
     async def _stop_typing(self, channel_id: str) -> None:
-        """Stop typing indicator for a channel."""
+        """
+        停止指定频道的“正在输入”指示器。
+
+        Args:
+            channel_id: Discord频道ID
+        """
         task = self._typing_tasks.pop(channel_id, None)
         if task:
             task.cancel()

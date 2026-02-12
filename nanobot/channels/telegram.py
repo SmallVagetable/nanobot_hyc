@@ -1,4 +1,12 @@
-"""Telegram channel implementation using python-telegram-bot."""
+"""使用python-telegram-bot实现的Telegram渠道。
+
+此模块实现了Telegram聊天渠道，支持：
+- 长轮询模式（无需webhook或公网IP）
+- 文本、图片、语音、文档消息
+- 语音转文字（使用Groq）
+- Markdown到HTML转换
+- 打字指示器
+"""
 
 from __future__ import annotations
 
@@ -22,12 +30,21 @@ if TYPE_CHECKING:
 
 def _markdown_to_telegram_html(text: str) -> str:
     """
-    Convert markdown to Telegram-safe HTML.
+    将Markdown转换为Telegram安全的HTML格式。
+    
+    Telegram支持有限的HTML标签，此函数将Markdown语法转换为
+    Telegram可以理解的HTML格式，同时保护代码块和行内代码不被转换。
+    
+    Args:
+        text: Markdown格式的文本
+    
+    Returns:
+        Telegram HTML格式的文本
     """
     if not text:
         return ""
     
-    # 1. Extract and protect code blocks (preserve content from other processing)
+    # 1. 提取并保护代码块（避免内容被其他处理影响）
     code_blocks: list[str] = []
     def save_code_block(m: re.Match) -> str:
         code_blocks.append(m.group(1))
@@ -35,7 +52,7 @@ def _markdown_to_telegram_html(text: str) -> str:
     
     text = re.sub(r'```[\w]*\n?([\s\S]*?)```', save_code_block, text)
     
-    # 2. Extract and protect inline code
+    # 2. 提取并保护行内代码
     inline_codes: list[str] = []
     def save_inline_code(m: re.Match) -> str:
         inline_codes.append(m.group(1))
@@ -43,40 +60,40 @@ def _markdown_to_telegram_html(text: str) -> str:
     
     text = re.sub(r'`([^`]+)`', save_inline_code, text)
     
-    # 3. Headers # Title -> just the title text
+    # 3. 标题 # Title -> 只保留标题文本
     text = re.sub(r'^#{1,6}\s+(.+)$', r'\1', text, flags=re.MULTILINE)
     
-    # 4. Blockquotes > text -> just the text (before HTML escaping)
+    # 4. 引用块 > text -> 只保留文本（在HTML转义之前）
     text = re.sub(r'^>\s*(.*)$', r'\1', text, flags=re.MULTILINE)
     
-    # 5. Escape HTML special characters
+    # 5. 转义HTML特殊字符
     text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     
-    # 6. Links [text](url) - must be before bold/italic to handle nested cases
+    # 6. 链接 [text](url) - 必须在粗体/斜体之前处理，以处理嵌套情况
     text = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'<a href="\2">\1</a>', text)
     
-    # 7. Bold **text** or __text__
+    # 7. 粗体 **text** 或 __text__
     text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
     text = re.sub(r'__(.+?)__', r'<b>\1</b>', text)
     
-    # 8. Italic _text_ (avoid matching inside words like some_var_name)
+    # 8. 斜体 _text_（避免匹配单词内部，如some_var_name）
     text = re.sub(r'(?<![a-zA-Z0-9])_([^_]+)_(?![a-zA-Z0-9])', r'<i>\1</i>', text)
     
-    # 9. Strikethrough ~~text~~
+    # 9. 删除线 ~~text~~
     text = re.sub(r'~~(.+?)~~', r'<s>\1</s>', text)
     
-    # 10. Bullet lists - item -> • item
+    # 10. 项目符号列表 - item -> • item
     text = re.sub(r'^[-*]\s+', '• ', text, flags=re.MULTILINE)
     
-    # 11. Restore inline code with HTML tags
+    # 11. 恢复行内代码并添加HTML标签
     for i, code in enumerate(inline_codes):
-        # Escape HTML in code content
+        # 转义代码内容中的HTML
         escaped = code.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         text = text.replace(f"\x00IC{i}\x00", f"<code>{escaped}</code>")
     
-    # 12. Restore code blocks with HTML tags
+    # 12. 恢复代码块并添加HTML标签
     for i, code in enumerate(code_blocks):
-        # Escape HTML in code content
+        # 转义代码内容中的HTML
         escaped = code.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         text = text.replace(f"\x00CB{i}\x00", f"<pre><code>{escaped}</code></pre>")
     
@@ -85,14 +102,15 @@ def _markdown_to_telegram_html(text: str) -> str:
 
 class TelegramChannel(BaseChannel):
     """
-    Telegram channel using long polling.
+    Telegram渠道，使用长轮询模式。
     
-    Simple and reliable - no webhook/public IP needed.
+    简单可靠 - 无需webhook或公网IP。
+    支持文本、图片、语音、文档等多种消息类型，并支持语音转文字功能。
     """
     
     name = "telegram"
     
-    # Commands registered with Telegram's command menu
+    # 注册到Telegram命令菜单的命令
     BOT_COMMANDS = [
         BotCommand("start", "Start the bot"),
         BotCommand("reset", "Reset conversation history"),
@@ -115,14 +133,19 @@ class TelegramChannel(BaseChannel):
         self._typing_tasks: dict[str, asyncio.Task] = {}  # chat_id -> typing loop task
     
     async def start(self) -> None:
-        """Start the Telegram bot with long polling."""
+        """
+        使用长轮询模式启动Telegram机器人。
+        
+        初始化Telegram机器人，注册命令处理器和消息处理器，
+        然后开始长轮询以接收消息。
+        """
         if not self.config.token:
             logger.error("Telegram bot token not configured")
             return
         
         self._running = True
         
-        # Build the application with larger connection pool to avoid pool-timeout on long runs
+        # 构建应用程序，使用更大的连接池以避免长时间运行时的池超时
         req = HTTPXRequest(connection_pool_size=16, pool_timeout=5.0, connect_timeout=30.0, read_timeout=30.0)
         builder = Application.builder().token(self.config.token).request(req).get_updates_request(req)
         if self.config.proxy:
@@ -130,12 +153,12 @@ class TelegramChannel(BaseChannel):
         self._app = builder.build()
         self._app.add_error_handler(self._on_error)
         
-        # Add command handlers
+        # 添加命令处理器
         self._app.add_handler(CommandHandler("start", self._on_start))
         self._app.add_handler(CommandHandler("reset", self._on_reset))
         self._app.add_handler(CommandHandler("help", self._on_help))
         
-        # Add message handler for text, photos, voice, documents
+        # 添加消息处理器（文本、图片、语音、文档）
         self._app.add_handler(
             MessageHandler(
                 (filters.TEXT | filters.PHOTO | filters.VOICE | filters.AUDIO | filters.Document.ALL) 
@@ -146,11 +169,11 @@ class TelegramChannel(BaseChannel):
         
         logger.info("Starting Telegram bot (polling mode)...")
         
-        # Initialize and start polling
+        # 初始化并开始轮询
         await self._app.initialize()
         await self._app.start()
         
-        # Get bot info and register command menu
+        # 获取机器人信息并注册命令菜单
         bot_info = await self._app.bot.get_me()
         logger.info(f"Telegram bot @{bot_info.username} connected")
         
@@ -160,21 +183,25 @@ class TelegramChannel(BaseChannel):
         except Exception as e:
             logger.warning(f"Failed to register bot commands: {e}")
         
-        # Start polling (this runs until stopped)
+        # 开始轮询（持续运行直到停止）
         await self._app.updater.start_polling(
             allowed_updates=["message"],
-            drop_pending_updates=True  # Ignore old messages on startup
+            drop_pending_updates=True  # 启动时忽略旧消息
         )
         
-        # Keep running until stopped
+        # 保持运行直到停止
         while self._running:
             await asyncio.sleep(1)
     
     async def stop(self) -> None:
-        """Stop the Telegram bot."""
+        """
+        停止Telegram机器人。
+        
+        取消所有打字指示器，停止轮询，并清理资源。
+        """
         self._running = False
         
-        # Cancel all typing indicators
+        # 取消所有打字指示器
         for chat_id in list(self._typing_tasks):
             self._stop_typing(chat_id)
         
@@ -186,18 +213,26 @@ class TelegramChannel(BaseChannel):
             self._app = None
     
     async def send(self, msg: OutboundMessage) -> None:
-        """Send a message through Telegram."""
+        """
+        通过Telegram发送消息。
+        
+        将Markdown格式的消息转换为Telegram HTML格式并发送。
+        如果HTML解析失败，会回退到纯文本格式。
+        
+        Args:
+            msg: 要发送的出站消息
+        """
         if not self._app:
             logger.warning("Telegram bot not running")
             return
         
-        # Stop typing indicator for this chat
+        # 停止此聊天的打字指示器
         self._stop_typing(msg.chat_id)
         
         try:
-            # chat_id should be the Telegram chat ID (integer)
+            # chat_id应该是Telegram聊天ID（整数）
             chat_id = int(msg.chat_id)
-            # Convert markdown to Telegram HTML
+            # 将Markdown转换为Telegram HTML
             html_content = _markdown_to_telegram_html(msg.content)
             await self._app.bot.send_message(
                 chat_id=chat_id,
@@ -207,7 +242,7 @@ class TelegramChannel(BaseChannel):
         except ValueError:
             logger.error(f"Invalid chat_id: {msg.chat_id}")
         except Exception as e:
-            # Fallback to plain text if HTML parsing fails
+            # 如果HTML解析失败，回退到纯文本
             logger.warning(f"HTML parse failed, falling back to plain text: {e}")
             try:
                 await self._app.bot.send_message(
@@ -218,7 +253,11 @@ class TelegramChannel(BaseChannel):
                 logger.error(f"Error sending Telegram message: {e2}")
     
     async def _on_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle /start command."""
+        """
+        处理 /start 命令。
+        
+        当用户首次启动机器人或发送/start命令时调用。
+        """
         if not update.message or not update.effective_user:
             return
         
@@ -230,7 +269,11 @@ class TelegramChannel(BaseChannel):
         )
     
     async def _on_reset(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle /reset command — clear conversation history."""
+        """
+        处理 /reset 命令 — 清除对话历史。
+        
+        清除当前会话的所有消息历史，重新开始对话。
+        """
         if not update.message or not update.effective_user:
             return
         
@@ -251,7 +294,11 @@ class TelegramChannel(BaseChannel):
         await update.message.reply_text("🔄 Conversation history cleared. Let's start fresh!")
     
     async def _on_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle /help command — show available commands."""
+        """
+        处理 /help 命令 — 显示可用命令。
+        
+        显示机器人支持的所有命令和使用说明。
+        """
         if not update.message:
             return
         
@@ -265,7 +312,18 @@ class TelegramChannel(BaseChannel):
         await update.message.reply_text(help_text, parse_mode="HTML")
     
     async def _on_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle incoming messages (text, photos, voice, documents)."""
+        """
+        处理入站消息（文本、图片、语音、文档）。
+        
+        处理来自Telegram的各种类型消息，包括：
+        - 文本消息
+        - 图片（带或不带标题）
+        - 语音消息（自动转文字）
+        - 音频文件
+        - 文档文件
+        
+        媒体文件会下载到本地，语音消息会自动转文字。
+        """
         if not update.message or not update.effective_user:
             return
         
@@ -273,30 +331,30 @@ class TelegramChannel(BaseChannel):
         user = update.effective_user
         chat_id = message.chat_id
         
-        # Use stable numeric ID, but keep username for allowlist compatibility
+        # 使用稳定的数字ID，但保留用户名以支持允许列表兼容性
         sender_id = str(user.id)
         if user.username:
             sender_id = f"{sender_id}|{user.username}"
         
-        # Store chat_id for replies
+        # 存储chat_id用于回复
         self._chat_ids[sender_id] = chat_id
         
-        # Build content from text and/or media
+        # 从文本和/或媒体构建内容
         content_parts = []
         media_paths = []
         
-        # Text content
+        # 文本内容
         if message.text:
             content_parts.append(message.text)
         if message.caption:
             content_parts.append(message.caption)
         
-        # Handle media files
+        # 处理媒体文件
         media_file = None
         media_type = None
         
         if message.photo:
-            media_file = message.photo[-1]  # Largest photo
+            media_file = message.photo[-1]  # 最大的图片
             media_type = "image"
         elif message.voice:
             media_file = message.voice
@@ -308,13 +366,13 @@ class TelegramChannel(BaseChannel):
             media_file = message.document
             media_type = "file"
         
-        # Download media if present
+        # 如果存在媒体文件则下载
         if media_file and self._app:
             try:
                 file = await self._app.bot.get_file(media_file.file_id)
                 ext = self._get_extension(media_type, getattr(media_file, 'mime_type', None))
                 
-                # Save to workspace/media/
+                # 保存到工作空间/media/目录
                 from pathlib import Path
                 media_dir = Path.home() / ".nanobot" / "media"
                 media_dir.mkdir(parents=True, exist_ok=True)
@@ -324,7 +382,7 @@ class TelegramChannel(BaseChannel):
                 
                 media_paths.append(str(file_path))
                 
-                # Handle voice transcription
+                # 处理语音转文字
                 if media_type == "voice" or media_type == "audio":
                     from nanobot.providers.transcription import GroqTranscriptionProvider
                     transcriber = GroqTranscriptionProvider(api_key=self.groq_api_key)
@@ -348,10 +406,10 @@ class TelegramChannel(BaseChannel):
         
         str_chat_id = str(chat_id)
         
-        # Start typing indicator before processing
+        # 在处理前启动打字指示器
         self._start_typing(str_chat_id)
         
-        # Forward to the message bus
+        # 转发到消息总线
         await self._handle_message(
             sender_id=sender_id,
             chat_id=str_chat_id,
@@ -367,19 +425,36 @@ class TelegramChannel(BaseChannel):
         )
     
     def _start_typing(self, chat_id: str) -> None:
-        """Start sending 'typing...' indicator for a chat."""
-        # Cancel any existing typing task for this chat
+        """
+        开始为聊天发送"正在输入..."指示器。
+        
+        Args:
+            chat_id: 聊天ID
+        """
+        # 取消此聊天的任何现有打字任务
         self._stop_typing(chat_id)
         self._typing_tasks[chat_id] = asyncio.create_task(self._typing_loop(chat_id))
     
     def _stop_typing(self, chat_id: str) -> None:
-        """Stop the typing indicator for a chat."""
+        """
+        停止聊天的打字指示器。
+        
+        Args:
+            chat_id: 聊天ID
+        """
         task = self._typing_tasks.pop(chat_id, None)
         if task and not task.done():
             task.cancel()
     
     async def _typing_loop(self, chat_id: str) -> None:
-        """Repeatedly send 'typing' action until cancelled."""
+        """
+        重复发送"正在输入"动作，直到被取消。
+        
+        每4秒发送一次打字动作，直到任务被取消。
+        
+        Args:
+            chat_id: 聊天ID
+        """
         try:
             while self._app:
                 await self._app.bot.send_chat_action(chat_id=int(chat_id), action="typing")
@@ -390,11 +465,26 @@ class TelegramChannel(BaseChannel):
             logger.debug(f"Typing indicator stopped for {chat_id}: {e}")
     
     async def _on_error(self, update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Log polling / handler errors instead of silently swallowing them."""
+        """
+        记录轮询/处理器错误，而不是静默忽略。
+        
+        Args:
+            update: 更新对象
+            context: 上下文对象
+        """
         logger.error(f"Telegram error: {context.error}")
 
     def _get_extension(self, media_type: str, mime_type: str | None) -> str:
-        """Get file extension based on media type."""
+        """
+        根据媒体类型获取文件扩展名。
+        
+        Args:
+            media_type: 媒体类型（image、voice、audio、file）
+            mime_type: MIME类型（可选）
+        
+        Returns:
+            文件扩展名
+        """
         if mime_type:
             ext_map = {
                 "image/jpeg": ".jpg", "image/png": ".png", "image/gif": ".gif",
