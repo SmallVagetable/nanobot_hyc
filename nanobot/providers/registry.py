@@ -1,13 +1,13 @@
 """
-Provider Registry — single source of truth for LLM provider metadata.
+提供者注册表 — LLM提供者元数据的单一真实来源。
 
-Adding a new provider:
-  1. Add a ProviderSpec to PROVIDERS below.
-  2. Add a field to ProvidersConfig in config/schema.py.
-  Done. Env vars, prefixing, config matching, status display all derive from here.
+添加新提供者的步骤：
+  1. 在下面的PROVIDERS中添加一个ProviderSpec。
+  2. 在config/schema.py的ProvidersConfig中添加一个字段。
+  完成。环境变量、前缀、配置匹配、状态显示都从这里派生。
 
-Order matters — it controls match priority and fallback. Gateways first.
-Every entry writes out all fields so you can copy-paste as a template.
+顺序很重要 — 它控制匹配优先级和回退顺序。网关优先。
+每个条目都写出所有字段，以便您可以复制粘贴作为模板。
 """
 
 from __future__ import annotations
@@ -18,52 +18,59 @@ from typing import Any
 
 @dataclass(frozen=True)
 class ProviderSpec:
-    """One LLM provider's metadata. See PROVIDERS below for real examples.
+    """
+    一个LLM提供者的元数据。参见下面的PROVIDERS了解真实示例。
 
-    Placeholders in env_extras values:
-      {api_key}  — the user's API key
-      {api_base} — api_base from config, or this spec's default_api_base
+    env_extras值中的占位符：
+      {api_key}  — 用户的API密钥
+      {api_base} — 来自配置的api_base，或此规范的default_api_base
     """
 
-    # identity
-    name: str                       # config field name, e.g. "dashscope"
-    keywords: tuple[str, ...]       # model-name keywords for matching (lowercase)
-    env_key: str                    # LiteLLM env var, e.g. "DASHSCOPE_API_KEY"
-    display_name: str = ""          # shown in `nanobot status`
+    # 身份信息
+    name: str  # 配置字段名称，例如"dashscope"
+    keywords: tuple[str, ...]  # 用于匹配的模型名称关键词（小写）
+    env_key: str  # LiteLLM环境变量，例如"DASHSCOPE_API_KEY"
+    display_name: str = ""  # 在`nanobot status`中显示的名称
 
-    # model prefixing
-    litellm_prefix: str = ""                 # "dashscope" → model becomes "dashscope/{model}"
-    skip_prefixes: tuple[str, ...] = ()      # don't prefix if model already starts with these
+    # 模型前缀
+    litellm_prefix: str = ""  # "dashscope" → 模型变为"dashscope/{model}"
+    skip_prefixes: tuple[str, ...] = ()  # 如果模型已以这些前缀开头，则不添加前缀
 
-    # extra env vars, e.g. (("ZHIPUAI_API_KEY", "{api_key}"),)
+    # 额外的环境变量，例如(("ZHIPUAI_API_KEY", "{api_key}"),)
     env_extras: tuple[tuple[str, str], ...] = ()
 
-    # gateway / local detection
-    is_gateway: bool = False                 # routes any model (OpenRouter, AiHubMix)
-    is_local: bool = False                   # local deployment (vLLM, Ollama)
-    detect_by_key_prefix: str = ""           # match api_key prefix, e.g. "sk-or-"
-    detect_by_base_keyword: str = ""         # match substring in api_base URL
-    default_api_base: str = ""               # fallback base URL
+    # 网关/本地检测
+    is_gateway: bool = False  # 路由任何模型（OpenRouter、AiHubMix）
+    is_local: bool = False  # 本地部署（vLLM、Ollama）
+    detect_by_key_prefix: str = ""  # 匹配api_key前缀，例如"sk-or-"
+    detect_by_base_keyword: str = ""  # 匹配api_base URL中的子字符串
+    default_api_base: str = ""  # 回退基础URL
 
-    # gateway behavior
-    strip_model_prefix: bool = False         # strip "provider/" before re-prefixing
+    # 网关行为
+    strip_model_prefix: bool = False  # 在重新添加前缀之前剥离"provider/"
 
-    # per-model param overrides, e.g. (("kimi-k2.5", {"temperature": 1.0}),)
+    # 每个模型的参数覆盖，例如(("kimi-k2.5", {"temperature": 1.0}),)
     model_overrides: tuple[tuple[str, dict[str, Any]], ...] = ()
 
     @property
     def label(self) -> str:
+        """
+        获取显示标签。
+        
+        Returns:
+            显示名称，如果没有则返回首字母大写的名称
+        """
         return self.display_name or self.name.title()
 
 
 # ---------------------------------------------------------------------------
-# PROVIDERS — the registry. Order = priority. Copy any entry as template.
+# PROVIDERS — 注册表。顺序 = 优先级。复制任何条目作为模板。
 # ---------------------------------------------------------------------------
 
 PROVIDERS: tuple[ProviderSpec, ...] = (
 
-    # === Gateways (detected by api_key / api_base, not model name) =========
-    # Gateways can route any model, so they win in fallback.
+    # === 网关（通过api_key / api_base检测，而非模型名称）=========
+    # 网关可以路由任何模型，因此在回退时优先。
 
     # OpenRouter: global gateway, keys start with "sk-or-"
     ProviderSpec(
@@ -103,7 +110,7 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         model_overrides=(),
     ),
 
-    # === Standard providers (matched by model-name keywords) ===============
+    # === 标准提供者（通过模型名称关键词匹配）===============
 
     # Anthropic: LiteLLM recognizes "claude-*" natively, no prefix needed.
     ProviderSpec(
@@ -260,7 +267,7 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         model_overrides=(),
     ),
 
-    # === Local deployment (matched by config key, NOT by api_base) =========
+    # === 本地部署（通过配置键匹配，而非api_base）=========
 
     # vLLM / any OpenAI-compatible local server.
     # Detected when config key is "vllm" (provider_name="vllm").
@@ -281,7 +288,7 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         model_overrides=(),
     ),
 
-    # === Auxiliary (not a primary LLM provider) ============================
+    # === 辅助提供者（非主要LLM提供者）============================
 
     # Groq: mainly used for Whisper voice transcription, also usable for LLM.
     # Needs "groq/" prefix for LiteLLM routing. Placed last — it rarely wins fallback.
@@ -305,12 +312,21 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
 
 
 # ---------------------------------------------------------------------------
-# Lookup helpers
+# 查找辅助函数
 # ---------------------------------------------------------------------------
 
 def find_by_model(model: str) -> ProviderSpec | None:
-    """Match a standard provider by model-name keyword (case-insensitive).
-    Skips gateways/local — those are matched by api_key/api_base instead."""
+    """
+    通过模型名称关键词匹配标准提供者（不区分大小写）。
+    
+    跳过网关/本地提供者 — 这些通过api_key/api_base匹配。
+    
+    Args:
+        model: 模型名称
+    
+    Returns:
+        匹配的ProviderSpec，如果未找到则返回None
+    """
     model_lower = model.lower()
     for spec in PROVIDERS:
         if spec.is_gateway or spec.is_local:
@@ -325,23 +341,32 @@ def find_gateway(
     api_key: str | None = None,
     api_base: str | None = None,
 ) -> ProviderSpec | None:
-    """Detect gateway/local provider.
-
-    Priority:
-      1. provider_name — if it maps to a gateway/local spec, use it directly.
-      2. api_key prefix — e.g. "sk-or-" → OpenRouter.
-      3. api_base keyword — e.g. "aihubmix" in URL → AiHubMix.
-
-    A standard provider with a custom api_base (e.g. DeepSeek behind a proxy)
-    will NOT be mistaken for vLLM — the old fallback is gone.
     """
-    # 1. Direct match by config key
+    检测网关/本地提供者。
+
+    优先级：
+      1. provider_name — 如果它映射到网关/本地规范，直接使用。
+      2. api_key前缀 — 例如"sk-or-" → OpenRouter。
+      3. api_base关键词 — 例如URL中的"aihubmix" → AiHubMix。
+
+    具有自定义api_base的标准提供者（例如代理后的DeepSeek）
+    不会被误认为是vLLM — 旧的回退已移除。
+    
+    Args:
+        provider_name: 提供者名称
+        api_key: API密钥
+        api_base: API基础URL
+    
+    Returns:
+        匹配的ProviderSpec，如果未找到则返回None
+    """
+    # 1. 通过配置键直接匹配
     if provider_name:
         spec = find_by_name(provider_name)
         if spec and (spec.is_gateway or spec.is_local):
             return spec
 
-    # 2. Auto-detect by api_key prefix / api_base keyword
+    # 2. 通过api_key前缀/api_base关键词自动检测
     for spec in PROVIDERS:
         if spec.detect_by_key_prefix and api_key and api_key.startswith(spec.detect_by_key_prefix):
             return spec
@@ -352,7 +377,17 @@ def find_gateway(
 
 
 def find_by_name(name: str) -> ProviderSpec | None:
-    """Find a provider spec by config field name, e.g. "dashscope"."""
+    """
+    通过配置字段名称查找提供者规范。
+    
+    例如："dashscope"
+    
+    Args:
+        name: 提供者名称
+    
+    Returns:
+        匹配的ProviderSpec，如果未找到则返回None
+    """
     for spec in PROVIDERS:
         if spec.name == name:
             return spec

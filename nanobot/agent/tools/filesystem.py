@@ -1,4 +1,13 @@
-"""File system tools: read, write, edit."""
+"""文件系统工具：读取、写入、编辑文件。
+
+此模块提供了文件系统操作工具，包括：
+- ReadFileTool: 读取文件内容
+- WriteFileTool: 写入文件内容
+- EditFileTool: 编辑文件（替换文本）
+- ListDirTool: 列出目录内容
+
+所有工具都支持目录限制功能，可以限制操作只能在指定目录内进行。
+"""
 
 from pathlib import Path
 from typing import Any
@@ -7,7 +16,22 @@ from nanobot.agent.tools.base import Tool
 
 
 def _resolve_path(path: str, allowed_dir: Path | None = None) -> Path:
-    """Resolve path and optionally enforce directory restriction."""
+    """
+    解析路径并可选地强制执行目录限制。
+    
+    如果指定了allowed_dir，会检查解析后的路径是否在允许的目录内。
+    如果不在，会抛出PermissionError异常。
+    
+    Args:
+        path: 要解析的路径字符串
+        allowed_dir: 可选的允许目录，如果指定则限制路径必须在此目录内
+    
+    Returns:
+        解析后的Path对象
+    
+    Raises:
+        PermissionError: 如果路径不在允许的目录内
+    """
     resolved = Path(path).expanduser().resolve()
     if allowed_dir and not str(resolved).startswith(str(allowed_dir.resolve())):
         raise PermissionError(f"Path {path} is outside allowed directory {allowed_dir}")
@@ -15,7 +39,12 @@ def _resolve_path(path: str, allowed_dir: Path | None = None) -> Path:
 
 
 class ReadFileTool(Tool):
-    """Tool to read file contents."""
+    """
+    读取文件内容的工具。
+    
+    用于读取指定路径的文件内容，支持UTF-8编码。
+    如果配置了目录限制，只能读取允许目录内的文件。
+    """
     
     def __init__(self, allowed_dir: Path | None = None):
         self._allowed_dir = allowed_dir
@@ -58,7 +87,13 @@ class ReadFileTool(Tool):
 
 
 class WriteFileTool(Tool):
-    """Tool to write content to a file."""
+    """
+    写入文件内容的工具。
+    
+    用于将内容写入指定路径的文件。如果文件不存在会自动创建，
+    如果父目录不存在也会自动创建。支持UTF-8编码。
+    如果配置了目录限制，只能写入允许目录内的文件。
+    """
     
     def __init__(self, allowed_dir: Path | None = None):
         self._allowed_dir = allowed_dir
@@ -101,7 +136,14 @@ class WriteFileTool(Tool):
 
 
 class EditFileTool(Tool):
-    """Tool to edit a file by replacing text."""
+    """
+    通过替换文本来编辑文件的工具。
+    
+    用于在文件中查找并替换指定的文本。要求old_text必须
+    在文件中精确存在，且只能出现一次（如果出现多次会提示
+    需要提供更多上下文）。
+    如果配置了目录限制，只能编辑允许目录内的文件。
+    """
     
     def __init__(self, allowed_dir: Path | None = None):
         self._allowed_dir = allowed_dir
@@ -162,7 +204,13 @@ class EditFileTool(Tool):
 
 
 class ListDirTool(Tool):
-    """Tool to list directory contents."""
+    """
+    列出目录内容的工具。
+    
+    用于列出指定目录下的所有文件和子目录。
+    使用emoji图标区分文件和目录（📄表示文件，📁表示目录）。
+    如果配置了目录限制，只能列出允许目录内的内容。
+    """
     
     def __init__(self, allowed_dir: Path | None = None):
         self._allowed_dir = allowed_dir

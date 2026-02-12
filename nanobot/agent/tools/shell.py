@@ -1,4 +1,14 @@
-"""Shell execution tool."""
+"""Shell命令执行工具。
+
+此模块提供了Shell命令执行工具，支持：
+- 异步执行Shell命令
+- 超时控制
+- 安全防护（阻止危险命令）
+- 工作目录限制
+- 路径遍历防护
+
+包含多层安全机制，防止执行危险的系统命令。
+"""
 
 import asyncio
 import os
@@ -10,7 +20,17 @@ from nanobot.agent.tools.base import Tool
 
 
 class ExecTool(Tool):
-    """Tool to execute shell commands."""
+    """
+    Shell命令执行工具。
+    
+    用于执行Shell命令并返回输出。包含多层安全防护机制：
+    - 阻止危险命令模式（如rm -rf、format等）
+    - 支持工作目录限制
+    - 防止路径遍历攻击
+    - 支持超时控制
+    
+    使用此工具时需谨慎，确保命令的安全性。
+    """
     
     def __init__(
         self,
@@ -109,7 +129,23 @@ class ExecTool(Tool):
             return f"Error executing command: {str(e)}"
 
     def _guard_command(self, command: str, cwd: str) -> str | None:
-        """Best-effort safety guard for potentially destructive commands."""
+        """
+        尽力而为的安全防护，阻止潜在的破坏性命令。
+        
+        检查命令是否包含危险模式，如果包含则返回错误信息。
+        支持：
+        - 拒绝列表模式匹配
+        - 允许列表模式匹配（如果配置）
+        - 路径遍历检测
+        - 工作目录限制检查
+        
+        Args:
+            command: 要检查的命令
+            cwd: 当前工作目录
+        
+        Returns:
+            如果命令被阻止则返回错误信息，否则返回None
+        """
         cmd = command.strip()
         lower = cmd.lower()
 

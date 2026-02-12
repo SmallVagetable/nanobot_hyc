@@ -1,4 +1,11 @@
-"""Web tools: web_search and web_fetch."""
+"""网络工具：网络搜索和网页获取。
+
+此模块提供了网络相关工具：
+- WebSearchTool: 使用Brave Search API进行网络搜索
+- WebFetchTool: 获取网页内容并提取可读文本
+
+支持多种内容格式（HTML、JSON等），并能将HTML转换为Markdown格式。
+"""
 
 import html
 import json
@@ -11,13 +18,24 @@ import httpx
 
 from nanobot.agent.tools.base import Tool
 
-# Shared constants
-USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_7_2) AppleWebKit/537.36"
-MAX_REDIRECTS = 5  # Limit redirects to prevent DoS attacks
+# 共享常量
+USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_7_2) AppleWebKit/537.36"  # 用户代理字符串
+MAX_REDIRECTS = 5  # 限制重定向次数，防止DoS攻击
 
 
 def _strip_tags(text: str) -> str:
-    """Remove HTML tags and decode entities."""
+    """
+    移除HTML标签并解码实体。
+    
+    移除script和style标签，然后移除所有HTML标签，
+    最后解码HTML实体（如&amp; -> &）。
+    
+    Args:
+        text: 包含HTML的文本
+    
+    Returns:
+        清理后的纯文本
+    """
     text = re.sub(r'<script[\s\S]*?</script>', '', text, flags=re.I)
     text = re.sub(r'<style[\s\S]*?</style>', '', text, flags=re.I)
     text = re.sub(r'<[^>]+>', '', text)
@@ -25,13 +43,31 @@ def _strip_tags(text: str) -> str:
 
 
 def _normalize(text: str) -> str:
-    """Normalize whitespace."""
+    """
+    规范化空白字符。
+    
+    将多个空格/制表符合并为单个空格，将多个换行符合并为两个换行符。
+    
+    Args:
+        text: 要规范化的文本
+    
+    Returns:
+        规范化后的文本
+    """
     text = re.sub(r'[ \t]+', ' ', text)
     return re.sub(r'\n{3,}', '\n\n', text).strip()
 
 
 def _validate_url(url: str) -> tuple[bool, str]:
-    """Validate URL: must be http(s) with valid domain."""
+    """
+    验证URL：必须是http(s)协议且包含有效域名。
+    
+    Args:
+        url: 要验证的URL字符串
+    
+    Returns:
+        包含(是否有效, 错误信息)的元组
+    """
     try:
         p = urlparse(url)
         if p.scheme not in ('http', 'https'):
@@ -44,7 +80,12 @@ def _validate_url(url: str) -> tuple[bool, str]:
 
 
 class WebSearchTool(Tool):
-    """Search the web using Brave Search API."""
+    """
+    使用Brave Search API进行网络搜索的工具。
+    
+    需要配置BRAVE_API_KEY环境变量或通过构造函数传入API密钥。
+    返回搜索结果，包括标题、URL和摘要。
+    """
     
     name = "web_search"
     description = "Search the web. Returns titles, URLs, and snippets."
@@ -91,7 +132,16 @@ class WebSearchTool(Tool):
 
 
 class WebFetchTool(Tool):
-    """Fetch and extract content from a URL using Readability."""
+    """
+    使用Readability获取并提取URL内容的工具。
+    
+    支持多种内容格式：
+    - HTML: 使用Readability提取主要内容，可转换为Markdown或纯文本
+    - JSON: 直接返回格式化的JSON
+    - 其他文本: 返回原始文本
+    
+    支持内容截断，防止返回过长的内容。
+    """
     
     name = "web_fetch"
     description = "Fetch URL and extract readable content (HTML → markdown/text)."
@@ -151,7 +201,22 @@ class WebFetchTool(Tool):
             return json.dumps({"error": str(e), "url": url})
     
     def _to_markdown(self, html: str) -> str:
-        """Convert HTML to markdown."""
+        """
+        将HTML转换为Markdown格式。
+        
+        转换规则：
+        - 链接: <a href="...">text</a> -> [text](url)
+        - 标题: <h1-6> -> # 标题
+        - 列表项: <li> -> - 项目
+        - 段落/div: 转换为双换行
+        - br/hr: 转换为单换行
+        
+        Args:
+            html: HTML字符串
+        
+        Returns:
+            Markdown格式的字符串
+        """
         # Convert links, headings, lists before stripping tags
         text = re.sub(r'<a\s+[^>]*href=["\']([^"\']+)["\'][^>]*>([\s\S]*?)</a>',
                       lambda m: f'[{_strip_tags(m[2])}]({m[1]})', html, flags=re.I)

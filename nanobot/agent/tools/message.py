@@ -1,4 +1,9 @@
-"""Message tool for sending messages to users."""
+"""消息发送工具，用于向用户发送消息。
+
+此模块提供了消息发送工具，允许智能体通过消息总线
+向用户发送消息。支持设置默认渠道和聊天ID，也支持
+在调用时指定目标渠道和聊天ID。
+"""
 
 from typing import Any, Callable, Awaitable
 
@@ -7,7 +12,17 @@ from nanobot.bus.events import OutboundMessage
 
 
 class MessageTool(Tool):
-    """Tool to send messages to users on chat channels."""
+    """
+    向聊天渠道用户发送消息的工具。
+    
+    用于智能体主动向用户发送消息。支持：
+    - 设置默认渠道和聊天ID（通过set_context方法）
+    - 在调用时指定目标渠道和聊天ID
+    - 通过回调函数发送消息到消息总线
+    
+    注意：在正常对话中，智能体应该直接回复文本，而不是使用此工具。
+    此工具主要用于需要主动通知用户的场景。
+    """
     
     def __init__(
         self, 

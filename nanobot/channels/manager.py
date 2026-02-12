@@ -1,4 +1,10 @@
-"""Channel manager for coordinating chat channels."""
+"""渠道管理器，用于协调聊天渠道。
+
+此模块实现了渠道管理器，负责：
+- 根据配置初始化启用的渠道（Telegram、WhatsApp等）
+- 启动和停止渠道
+- 路由出站消息到相应的渠道
+"""
 
 from __future__ import annotations
 
@@ -18,25 +24,41 @@ if TYPE_CHECKING:
 
 class ChannelManager:
     """
-    Manages chat channels and coordinates message routing.
+    管理聊天渠道并协调消息路由。
     
-    Responsibilities:
-    - Initialize enabled channels (Telegram, WhatsApp, etc.)
-    - Start/stop channels
-    - Route outbound messages
+    职责：
+    - 初始化启用的渠道（Telegram、WhatsApp等）
+    - 启动/停止渠道
+    - 路由出站消息到相应的渠道
+    
+    渠道管理器从消息总线接收出站消息，并根据消息的渠道字段
+    将消息路由到相应的渠道实现。
     """
     
     def __init__(self, config: Config, bus: MessageBus, session_manager: "SessionManager | None" = None):
+        """
+        初始化渠道管理器。
+        
+        Args:
+            config: 配置对象
+            bus: 消息总线
+            session_manager: 会话管理器（可选）
+        """
         self.config = config
         self.bus = bus
         self.session_manager = session_manager
-        self.channels: dict[str, BaseChannel] = {}
-        self._dispatch_task: asyncio.Task | None = None
+        self.channels: dict[str, BaseChannel] = {}  # 已初始化的渠道字典
+        self._dispatch_task: asyncio.Task | None = None  # 消息分发任务
         
         self._init_channels()
     
     def _init_channels(self) -> None:
-        """Initialize channels based on config."""
+        """
+        根据配置初始化渠道。
+        
+        检查配置中启用的渠道，并创建相应的渠道实例。
+        如果某个渠道的依赖未安装，会记录警告但不会中断初始化。
+        """
         
         # Telegram channel
         if self.config.channels.telegram.enabled:
@@ -143,35 +165,50 @@ class ChannelManager:
                 logger.warning(f"QQ channel not available: {e}")
     
     async def _start_channel(self, name: str, channel: BaseChannel) -> None:
-        """Start a channel and log any exceptions."""
+        """
+        启动一个渠道并记录任何异常。
+        
+        Args:
+            name: 渠道名称
+            channel: 渠道实例
+        """
         try:
             await channel.start()
         except Exception as e:
             logger.error(f"Failed to start channel {name}: {e}")
 
     async def start_all(self) -> None:
-        """Start all channels and the outbound dispatcher."""
+        """
+        启动所有渠道和出站消息分发器。
+        
+        启动所有已初始化的渠道，并启动出站消息分发器。
+        所有任务会并发运行，直到被停止。
+        """
         if not self.channels:
             logger.warning("No channels enabled")
             return
         
-        # Start outbound dispatcher
+        # 启动出站消息分发器
         self._dispatch_task = asyncio.create_task(self._dispatch_outbound())
         
-        # Start channels
+        # 启动所有渠道
         tasks = []
         for name, channel in self.channels.items():
             logger.info(f"Starting {name} channel...")
             tasks.append(asyncio.create_task(self._start_channel(name, channel)))
         
-        # Wait for all to complete (they should run forever)
+        # 等待所有任务完成（它们应该永远运行）
         await asyncio.gather(*tasks, return_exceptions=True)
     
     async def stop_all(self) -> None:
-        """Stop all channels and the dispatcher."""
+        """
+        停止所有渠道和分发器。
+        
+        优雅地停止所有正在运行的渠道和消息分发器。
+        """
         logger.info("Stopping all channels...")
         
-        # Stop dispatcher
+        # 停止分发器
         if self._dispatch_task:
             self._dispatch_task.cancel()
             try:
@@ -179,7 +216,7 @@ class ChannelManager:
             except asyncio.CancelledError:
                 pass
         
-        # Stop all channels
+        # 停止所有渠道
         for name, channel in self.channels.items():
             try:
                 await channel.stop()
@@ -188,7 +225,12 @@ class ChannelManager:
                 logger.error(f"Error stopping {name}: {e}")
     
     async def _dispatch_outbound(self) -> None:
-        """Dispatch outbound messages to the appropriate channel."""
+        """
+        将出站消息分发到相应的渠道。
+        
+        从消息总线消费出站消息，并根据消息的渠道字段
+        将消息路由到相应的渠道实现。
+        """
         logger.info("Outbound dispatcher started")
         
         while True:
