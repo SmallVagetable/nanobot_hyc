@@ -1,4 +1,12 @@
-"""Skills loader for agent capabilities."""
+"""技能加载器，用于管理智能体的能力扩展。
+
+此模块实现了技能加载系统，技能是Markdown文件（SKILL.md），用于
+教导智能体如何使用特定工具或执行特定任务。
+
+技能可以来自两个位置：
+1. 工作空间的skills目录（用户自定义技能，优先级最高）
+2. 内置的skills目录（系统提供的默认技能）
+"""
 
 import json
 import os
@@ -6,16 +14,21 @@ import re
 import shutil
 from pathlib import Path
 
-# Default builtin skills directory (relative to this file)
+# 默认内置技能目录（相对于此文件）
 BUILTIN_SKILLS_DIR = Path(__file__).parent.parent / "skills"
 
 
 class SkillsLoader:
     """
-    Loader for agent skills.
+    智能体技能加载器。
     
-    Skills are markdown files (SKILL.md) that teach the agent how to use
-    specific tools or perform certain tasks.
+    技能是Markdown文件（SKILL.md），用于教导智能体如何使用特定工具
+    或执行特定任务。技能文件可以包含YAML前置元数据，用于定义技能
+    的元信息、依赖要求等。
+    
+    支持渐进式加载策略：
+    - 总是加载的技能：包含完整内容到系统提示词
+    - 其他技能：只显示摘要，智能体需要使用read_file工具加载完整内容
     """
     
     def __init__(self, workspace: Path, builtin_skills_dir: Path | None = None):

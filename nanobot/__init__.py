@@ -1,5 +1,8 @@
 """
-nanobot - A lightweight AI agent framework
+nanobot - 一个轻量级的AI智能体框架
+
+这是一个用于构建和运行AI智能体的核心框架，支持多种聊天渠道、
+工具调用、技能扩展和会话管理等功能。
 """
 
 __version__ = "0.1.0"

@@ -1,4 +1,9 @@
-"""Subagent manager for background task execution."""
+"""子智能体管理器，用于后台任务执行。
+
+此模块实现了子智能体管理系统，允许主智能体生成轻量级的子智能体
+来执行后台任务。子智能体与主智能体共享LLM提供者，但拥有独立的
+上下文和聚焦的系统提示词。
+"""
 
 import asyncio
 import json
@@ -19,11 +24,15 @@ from nanobot.agent.tools.web import WebSearchTool, WebFetchTool
 
 class SubagentManager:
     """
-    Manages background subagent execution.
+    管理后台子智能体执行。
     
-    Subagents are lightweight agent instances that run in the background
-    to handle specific tasks. They share the same LLM provider but have
-    isolated context and a focused system prompt.
+    子智能体是轻量级的智能体实例，在后台运行以处理特定任务。
+    它们与主智能体共享相同的LLM提供者，但拥有独立的上下文和
+    聚焦的系统提示词。
+    
+    子智能体可以执行文件操作、Shell命令、网络搜索等任务，但
+    不能直接发送消息给用户或生成其他子智能体。任务完成后，
+    子智能体会通过消息总线通知主智能体。
     """
     
     def __init__(

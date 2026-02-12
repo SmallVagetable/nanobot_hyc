@@ -1,4 +1,8 @@
-"""Heartbeat service - periodic agent wake-up to check for tasks."""
+"""心跳服务 - 定期唤醒智能体检查任务。
+
+心跳服务会定期唤醒智能体，让它检查工作空间中的HEARTBEAT.md文件。
+如果文件中有任务或指令，智能体会执行它们；如果没有，则回复HEARTBEAT_OK。
+"""
 
 import asyncio
 from pathlib import Path
@@ -6,41 +10,54 @@ from typing import Any, Callable, Coroutine
 
 from loguru import logger
 
-# Default interval: 30 minutes
+# 默认间隔：30分钟
 DEFAULT_HEARTBEAT_INTERVAL_S = 30 * 60
 
-# The prompt sent to agent during heartbeat
+# 心跳时发送给智能体的提示词
 HEARTBEAT_PROMPT = """Read HEARTBEAT.md in your workspace (if it exists).
 Follow any instructions or tasks listed there.
 If nothing needs attention, reply with just: HEARTBEAT_OK"""
 
-# Token that indicates "nothing to do"
+# 表示"无事可做"的标记
 HEARTBEAT_OK_TOKEN = "HEARTBEAT_OK"
 
 
 def _is_heartbeat_empty(content: str | None) -> bool:
-    """Check if HEARTBEAT.md has no actionable content."""
+    """
+    检查HEARTBEAT.md是否没有可执行的内容。
+    
+    跳过空行、标题、HTML注释和空的复选框，只检查是否有实际的任务内容。
+    
+    Args:
+        content: HEARTBEAT.md文件内容
+    
+    Returns:
+        如果文件为空或没有可执行内容返回True，否则返回False
+    """
     if not content:
         return True
     
-    # Lines to skip: empty, headers, HTML comments, empty checkboxes
+    # 要跳过的行模式：空行、标题、HTML注释、空的复选框
     skip_patterns = {"- [ ]", "* [ ]", "- [x]", "* [x]"}
     
     for line in content.split("\n"):
         line = line.strip()
         if not line or line.startswith("#") or line.startswith("<!--") or line in skip_patterns:
             continue
-        return False  # Found actionable content
+        return False  # 找到可执行内容
     
     return True
 
 
 class HeartbeatService:
     """
-    Periodic heartbeat service that wakes the agent to check for tasks.
+    定期心跳服务，用于唤醒智能体检查任务。
     
-    The agent reads HEARTBEAT.md from the workspace and executes any
-    tasks listed there. If nothing needs attention, it replies HEARTBEAT_OK.
+    心跳服务会定期（默认30分钟）唤醒智能体，让它读取工作空间中的
+    HEARTBEAT.md文件并执行其中的任务。如果文件为空或没有需要处理的内容，
+    智能体会回复HEARTBEAT_OK。
+    
+    这允许用户通过编辑HEARTBEAT.md文件来给智能体安排定期任务。
     """
     
     def __init__(

@@ -1,4 +1,12 @@
-"""Cron service for scheduling agent tasks."""
+"""定时任务服务，用于调度智能体任务。
+
+此模块实现了定时任务服务，支持多种调度方式：
+- 在指定时间点执行（at）
+- 每隔指定时间间隔执行（every）
+- 使用cron表达式定义复杂调度（cron）
+
+任务可以配置为执行后自动删除，适用于一次性任务。
+"""
 
 import asyncio
 import json
@@ -13,21 +21,40 @@ from nanobot.cron.types import CronJob, CronJobState, CronPayload, CronSchedule,
 
 
 def _now_ms() -> int:
+    """
+    获取当前时间戳（毫秒）。
+    
+    Returns:
+        当前时间戳（毫秒）
+    """
     return int(time.time() * 1000)
 
 
 def _compute_next_run(schedule: CronSchedule, now_ms: int) -> int | None:
-    """Compute next run time in ms."""
+    """
+    计算下次运行时间（毫秒）。
+    
+    根据调度类型计算任务的下次执行时间。
+    
+    Args:
+        schedule: 调度定义
+        now_ms: 当前时间（毫秒）
+    
+    Returns:
+        下次运行时间（毫秒），如果无法计算则返回None
+    """
     if schedule.kind == "at":
+        # 一次性任务：如果指定时间已过则不再执行
         return schedule.at_ms if schedule.at_ms and schedule.at_ms > now_ms else None
     
     if schedule.kind == "every":
+        # 周期性任务：从当前时间开始，每隔指定间隔执行
         if not schedule.every_ms or schedule.every_ms <= 0:
             return None
-        # Next interval from now
         return now_ms + schedule.every_ms
     
     if schedule.kind == "cron" and schedule.expr:
+        # Cron表达式任务：使用croniter计算下次执行时间
         try:
             from croniter import croniter
             cron = croniter(schedule.expr, time.time())
@@ -40,7 +67,15 @@ def _compute_next_run(schedule: CronSchedule, now_ms: int) -> int | None:
 
 
 class CronService:
-    """Service for managing and executing scheduled jobs."""
+    """
+    定时任务服务，用于管理和执行定时任务。
+    
+    服务负责：
+    - 加载和保存任务配置
+    - 计算任务的执行时间
+    - 定时检查并执行到期的任务
+    - 管理任务的启用/禁用状态
+    """
     
     def __init__(
         self,
