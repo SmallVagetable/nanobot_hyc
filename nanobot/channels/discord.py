@@ -152,11 +152,35 @@ class DiscordChannel(BaseChannel):
                         logger.warning(f"Discord rate limited, retrying in {retry_after}s")
                         await asyncio.sleep(retry_after)
                         continue
-                    response.raise_for_status()
+                    if response.status_code >= 400:
+                        try:
+                            body = response.json()
+                            code = body.get("code")
+                            msg_discord = body.get("message", "")
+                            # 10003=Unknown Channel, 50001=Missing Access, 50013=Missing Permissions
+                            hint = ""
+                            if code == 10003:
+                                hint = "频道对机器人不可见：确认 (1) 机器人已加入该频道所在服务器 (2) 频道未删除。"
+                            elif code in (50001, 50013):
+                                hint = "机器人无权限：在该频道/服务器给机器人角色勾选「查看频道」和「发送消息」。"
+                            if hint:
+                                logger.error(f"Discord send failed: code={code}, message={msg_discord}. {hint}")
+                            else:
+                                logger.error(f"Discord send failed: code={code}, message={msg_discord}")
+                        except Exception:
+                            logger.error(f"Discord send failed: {response.status_code} {response.text}")
+                        return
                     return
                 except Exception as e:
                     if attempt == 2:
-                        logger.error(f"Error sending Discord message: {e}")
+                        err = str(e)
+                        if "404" in err:
+                            logger.error(
+                                f"Error sending Discord message: {e}. "
+                                "若确认是频道 ID，请检查：(1) 机器人是否已加入该频道所在服务器 (2) 该频道是否对机器人开放「查看频道」和「发送消息」。"
+                            )
+                        else:
+                            logger.error(f"Error sending Discord message: {e}")
                     else:
                         await asyncio.sleep(1)
         finally:
@@ -299,6 +323,8 @@ class DiscordChannel(BaseChannel):
                 content_parts.append(f"[attachment: {filename} - download failed]")
 
         reply_to = (payload.get("referenced_message") or {}).get("id")
+
+        logger.debug(f"Discord channel_id={channel_id} (cron --to 填此值可投递到本频道)")
 
         await self._start_typing(channel_id)
 

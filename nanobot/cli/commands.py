@@ -807,6 +807,8 @@ def cron_list(
             sched = f"every {(job.schedule.every_ms or 0) // 1000}s"
         elif job.schedule.kind == "cron":
             sched = job.schedule.expr or ""
+            if job.schedule.tz:
+                sched += f" (tz: {job.schedule.tz})"
         else:
             sched = "one-time"
         
@@ -829,6 +831,7 @@ def cron_add(
     message: str = typer.Option(..., "--message", "-m", help="Message for agent"),
     every: int = typer.Option(None, "--every", "-e", help="Run every N seconds"),
     cron_expr: str = typer.Option(None, "--cron", "-c", help="Cron expression (e.g. '0 9 * * *')"),
+    tz: str = typer.Option(None, "--tz", "-z", help="Timezone for cron (e.g. 'Asia/Shanghai'). Default: local timezone"),
     at: str = typer.Option(None, "--at", help="Run once at time (ISO format)"),
     deliver: bool = typer.Option(False, "--deliver", "-d", help="Deliver response to channel"),
     to: str = typer.Option(None, "--to", help="Recipient for delivery"),
@@ -838,7 +841,7 @@ def cron_add(
     添加一个定时任务。
 
     支持三种调度方式：``--every``（每N秒）、``--cron``（Cron表达式）、
-    ``--at``（指定时间运行一次）。
+    ``--at``（指定时间运行一次）。Cron 表达式按本地时区解析，可用 ``--tz`` 指定时区。
     """
     from nanobot.config.loader import get_data_dir
     from nanobot.cron.service import CronService
@@ -848,7 +851,7 @@ def cron_add(
     if every:
         schedule = CronSchedule(kind="every", every_ms=every * 1000)
     elif cron_expr:
-        schedule = CronSchedule(kind="cron", expr=cron_expr)
+        schedule = CronSchedule(kind="cron", expr=cron_expr, tz=tz or None)
     elif at:
         import datetime
         dt = datetime.datetime.fromisoformat(at)

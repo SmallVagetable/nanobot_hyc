@@ -12,12 +12,29 @@ import asyncio
 import json
 import time
 import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Coroutine
 
 from loguru import logger
 
 from nanobot.cron.types import CronJob, CronJobState, CronPayload, CronSchedule, CronStore
+
+
+def _cron_timezone(schedule: CronSchedule):
+    """
+    解析 cron 使用的时区：若 schedule.tz 已指定则使用该时区，否则使用本地时区。
+    
+    Returns:
+        datetime.tzinfo 实例，用于构造带时区的 datetime
+    """
+    if schedule.tz:
+        try:
+            from zoneinfo import ZoneInfo
+            return ZoneInfo(schedule.tz)
+        except Exception:
+            logger.warning(f"Invalid cron timezone '{schedule.tz}', falling back to local")
+    return datetime.now().astimezone().tzinfo
 
 
 def _now_ms() -> int:
@@ -54,11 +71,14 @@ def _compute_next_run(schedule: CronSchedule, now_ms: int) -> int | None:
         return now_ms + schedule.every_ms
     
     if schedule.kind == "cron" and schedule.expr:
-        # Cron表达式任务：使用croniter计算下次执行时间
+        # Cron表达式任务：在指定时区（或本地时区）下用 croniter 计算下次执行时间
         try:
             from croniter import croniter
-            cron = croniter(schedule.expr, time.time())
-            next_time = cron.get_next()
+            tz = _cron_timezone(schedule)
+            now_sec = now_ms / 1000.0
+            start_dt = datetime.fromtimestamp(now_sec, tz=tz)
+            cron = croniter(schedule.expr, start_dt)
+            next_time = cron.get_next(float)
             return int(next_time * 1000)
         except Exception:
             return None

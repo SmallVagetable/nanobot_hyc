@@ -81,6 +81,10 @@ class CronTool(Tool):
                     "type": "string",
                     "description": "Cron expression like '0 9 * * *' (for scheduled tasks)"
                 },
+                "timezone": {
+                    "type": "string",
+                    "description": "Timezone for cron (e.g. 'Asia/Shanghai'). Omit to use local timezone"
+                },
                 "job_id": {
                     "type": "string",
                     "description": "Job ID (for remove)"
@@ -95,18 +99,25 @@ class CronTool(Tool):
         message: str = "",
         every_seconds: int | None = None,
         cron_expr: str | None = None,
+        timezone: str | None = None,
         job_id: str | None = None,
         **kwargs: Any
     ) -> str:
         if action == "add":
-            return self._add_job(message, every_seconds, cron_expr)
+            return self._add_job(message, every_seconds, cron_expr, timezone)
         elif action == "list":
             return self._list_jobs()
         elif action == "remove":
             return self._remove_job(job_id)
         return f"Unknown action: {action}"
     
-    def _add_job(self, message: str, every_seconds: int | None, cron_expr: str | None) -> str:
+    def _add_job(
+        self,
+        message: str,
+        every_seconds: int | None,
+        cron_expr: str | None,
+        timezone: str | None = None,
+    ) -> str:
         """
         添加新的定时任务。
         
@@ -114,6 +125,7 @@ class CronTool(Tool):
             message: 任务消息（要发送给智能体的内容）
             every_seconds: 周期性任务的间隔（秒）
             cron_expr: Cron表达式（用于按时间表执行）
+            timezone: 可选时区（如 Asia/Shanghai），不传则使用本地时区
         
         Returns:
             任务创建结果消息
@@ -127,7 +139,7 @@ class CronTool(Tool):
         if every_seconds:
             schedule = CronSchedule(kind="every", every_ms=every_seconds * 1000)
         elif cron_expr:
-            schedule = CronSchedule(kind="cron", expr=cron_expr)
+            schedule = CronSchedule(kind="cron", expr=cron_expr, tz=timezone or None)
         else:
             return "Error: either every_seconds or cron_expr is required"
         
