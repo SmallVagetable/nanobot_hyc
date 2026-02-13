@@ -12,6 +12,7 @@ build/
 *.pyz
 *.pywz
 *.pyzz
+*.log
 .venv/
 __pycache__/
 poetry.lock
